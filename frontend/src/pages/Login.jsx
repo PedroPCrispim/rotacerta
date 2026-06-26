@@ -25,6 +25,7 @@ const Login = () => {
           email: response.data.email,
           role: response.data.role,
           companyId: response.data.companyId,
+          viewAccess: response.data.viewAccess,
         },
         response.data.token,
       )

@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarRange,
   Clock,
+  Download,
   Fuel,
   Loader2,
   MapPin,
@@ -30,7 +31,6 @@ import useAuthStore from '../store/useAuthStore'
 const METRIC_KEYS = ['costSaved', 'distanceSaved', 'timeSaved', 'deliveries']
 const OPERATIONAL_METRICS = ['distanceSaved', 'timeSaved', 'deliveries']
 const FINANCIAL_METRICS = ['costSaved', 'distanceSaved', 'timeSaved', 'deliveries']
-const ACCESS_STORAGE_KEY = 'rotacerta_dashboard_view_access'
 const FINANCIAL_CONFIG_STORAGE_KEY = 'rotacerta_financial_config'
 
 const DASHBOARD_VIEWS = [
@@ -159,25 +159,6 @@ const normalizeAccess = (access, fallback) => ({
   fleet: access?.fleet ?? fallback.fleet,
 })
 
-const loadAccessMatrix = () => {
-  if (typeof window === 'undefined') {
-    return {}
-  }
-
-  try {
-    const stored = window.localStorage.getItem(ACCESS_STORAGE_KEY)
-    return stored ? JSON.parse(stored) : {}
-  } catch (error) {
-    return {}
-  }
-}
-
-const saveAccessMatrix = (matrix) => {
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(ACCESS_STORAGE_KEY, JSON.stringify(matrix))
-  }
-}
-
 const loadFinancialConfig = () => {
   if (typeof window === 'undefined') {
     return createDefaultFinancialConfig()
@@ -218,6 +199,11 @@ const buildTimelineQuery = (period, granularity, vehicleId, metric) => {
   }
 
   return params.toString()
+}
+
+const extractDownloadName = (contentDisposition, fallback) => {
+  const match = contentDisposition?.match(/filename="?([^"]+)"?/)
+  return match?.[1] || fallback
 }
 
 const mergeTimelineSeries = (timelines) => {
@@ -322,22 +308,17 @@ const buildDemoChartData = (basePoints, period, granularity) => {
 const buildLinePath = (points) =>
   points.reduce((path, point, index) => `${path}${index === 0 ? 'M' : ' L'} ${point.x} ${point.y}`, '')
 
-const mockDriverNames = [
-  'Carlos Silva',
-  'Marina Souza',
-  'Paulo Lima',
-  'Ana Beatriz',
-  'Rafael Costa',
-  'Juliana Alves',
-]
-
 const Dashboard = () => {
   const user = useAuthStore((state) => state.user)
+  const updateUser = useAuthStore((state) => state.updateUser)
   const [dashboard, setDashboard] = useState(null)
   const [timelines, setTimelines] = useState({})
   const [vehicles, setVehicles] = useState([])
   const [addresses, setAddresses] = useState([])
+  const [drivers, setDrivers] = useState([])
+  const [accessUsers, setAccessUsers] = useState([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState('')
   const [selectedGranularity, setSelectedGranularity] = useState('month')
   const [selectedVehicleId, setSelectedVehicleId] = useState('')
@@ -352,7 +333,6 @@ const Dashboard = () => {
   const [isSummaryOpen, setIsSummaryOpen] = useState(false)
   const [isAccessModalOpen, setIsAccessModalOpen] = useState(false)
   const [isFinancialConfigOpen, setIsFinancialConfigOpen] = useState(false)
-  const [accessMatrix, setAccessMatrix] = useState(() => loadAccessMatrix())
   const [financialConfig, setFinancialConfig] = useState(() => loadFinancialConfig())
   const [managedEmail, setManagedEmail] = useState('')
   const [managedAccess, setManagedAccess] = useState(createDefaultUserAccess())
@@ -367,10 +347,9 @@ const Dashboard = () => {
   })
 
   const isAdmin = user?.role === 'ADMIN'
-  const currentUserEmail = user?.email?.toLowerCase?.() || ''
   const currentUserAccess = isAdmin
     ? createAllAccess()
-    : normalizeAccess(accessMatrix[currentUserEmail], createDefaultUserAccess())
+    : normalizeAccess(user?.viewAccess, createDefaultUserAccess())
   const availableViews = DASHBOARD_VIEWS.filter((view) => currentUserAccess[view.key])
 
   useEffect(() => {
@@ -392,22 +371,43 @@ const Dashboard = () => {
         api.get(`/analytics/timeline?${buildTimelineQuery(period, selectedGranularity, selectedVehicleId, metric)}`),
       )
 
-      const [dashboardResponse, vehiclesResponse, addressesResponse, ...timelineResponses] = await Promise.all([
+      const currentAccessRequest = api.get('/users/access/me')
+      const companyUsersRequest = isAdmin ? api.get('/users/access') : Promise.resolve({ data: [] })
+
+      const [
+        dashboardResponse,
+        vehiclesResponse,
+        addressesResponse,
+        driversResponse,
+        financialSettingsResponse,
+        currentAccessResponse,
+        companyUsersResponse,
+        ...timelineResponses
+      ] = await Promise.all([
         api.get(`/analytics/dashboard?start=${period.start}&end=${period.end}`),
         api.get('/vehicles'),
         api.get('/addresses'),
+        api.get('/drivers'),
+        api.get('/analytics/financial-settings'),
+        currentAccessRequest,
+        companyUsersRequest,
         ...timelineRequests,
       ])
 
       setDashboard(dashboardResponse.data)
       setVehicles(vehiclesResponse.data)
       setAddresses(addressesResponse.data)
+      setDrivers(driversResponse.data || [])
       setTimelines(
         METRIC_KEYS.reduce((accumulator, metric, index) => {
           accumulator[metric] = timelineResponses[index]?.data
           return accumulator
         }, {}),
       )
+      const resolvedAccess = normalizeAccess(currentAccessResponse.data, createDefaultUserAccess())
+      updateUser({ viewAccess: isAdmin ? createAllAccess() : resolvedAccess })
+      setAccessUsers(companyUsersResponse.data || [])
+      setFinancialConfig(financialSettingsResponse.data || createDefaultFinancialConfig())
     } catch (err) {
       console.error('Erro ao carregar dashboard', err)
       setError('Nao foi possivel carregar os dados da dashboard agora.')
@@ -440,25 +440,45 @@ const Dashboard = () => {
     }))
   }
 
-  const saveManagedPermissions = () => {
+  const saveManagedPermissions = async () => {
     const normalizedEmail = managedEmail.trim().toLowerCase()
     if (!normalizedEmail) {
+      setError('Informe o email do usuario para salvar as permissoes.')
       return
     }
 
-    const nextMatrix = {
-      ...accessMatrix,
-      [normalizedEmail]: normalizeAccess(managedAccess, createDefaultUserAccess()),
-    }
+    try {
+      setError('')
+      const response = await api.put('/users/access', {
+        email: normalizedEmail,
+        viewAccess: normalizeAccess(managedAccess, createDefaultUserAccess()),
+      })
 
-    setAccessMatrix(nextMatrix)
-    saveAccessMatrix(nextMatrix)
-    setIsAccessModalOpen(false)
+      setAccessUsers((current) => {
+        const nextUsers = [...current]
+        const targetIndex = nextUsers.findIndex(
+          (entry) => entry.email?.toLowerCase?.() === response.data.email?.toLowerCase?.(),
+        )
+
+        if (targetIndex >= 0) {
+          nextUsers[targetIndex] = response.data
+        } else {
+          nextUsers.push(response.data)
+        }
+
+        return nextUsers.sort((left, right) => (left.name || left.email).localeCompare(right.name || right.email))
+      })
+      setIsAccessModalOpen(false)
+    } catch (err) {
+      console.error('Erro ao salvar permissoes de visualizacao', err)
+      setError(err.response?.data?.message || 'Nao foi possivel salvar as permissoes agora.')
+    }
   }
 
   const editPermissionEntry = (email) => {
+    const targetUser = accessUsers.find((entry) => entry.email?.toLowerCase?.() === email?.toLowerCase?.())
     setManagedEmail(email)
-    setManagedAccess(normalizeAccess(accessMatrix[email], createDefaultUserAccess()))
+    setManagedAccess(normalizeAccess(targetUser?.viewAccess, createDefaultUserAccess()))
     setIsAccessModalOpen(true)
   }
 
@@ -470,8 +490,56 @@ const Dashboard = () => {
   }
 
   const persistFinancialConfig = () => {
-    saveFinancialConfig(financialConfig)
-    setIsFinancialConfigOpen(false)
+    api
+      .put('/analytics/financial-settings', financialConfig)
+      .then((response) => {
+        setFinancialConfig(response.data)
+        saveFinancialConfig(response.data)
+        setIsFinancialConfigOpen(false)
+      })
+      .catch((err) => {
+        console.error('Erro ao salvar configuracoes financeiras', err)
+        setError('Nao foi possivel salvar a configuracao financeira agora.')
+      })
+  }
+
+  const exportReport = async () => {
+    setIsExporting(true)
+    setError('')
+
+    try {
+      const params = new URLSearchParams({
+        start: period.start,
+        end: period.end,
+        granularity: selectedGranularity,
+        view: currentView,
+      })
+
+      if (selectedVehicleId) {
+        params.set('vehicleId', selectedVehicleId)
+      }
+
+      const response = await api.get(`/analytics/export?${params.toString()}`, {
+        responseType: 'blob',
+      })
+
+      const fallbackName = `rotacerta-${currentView}-${period.start}-${period.end}.csv`
+      const fileName = extractDownloadName(response.headers['content-disposition'], fallbackName)
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv;charset=utf-8;' }))
+      const anchor = document.createElement('a')
+
+      anchor.href = blobUrl
+      anchor.setAttribute('download', fileName)
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      window.URL.revokeObjectURL(blobUrl)
+    } catch (err) {
+      console.error('Erro ao exportar relatorio', err)
+      setError('Nao foi possivel exportar o relatorio agora.')
+    } finally {
+      setIsExporting(false)
+    }
   }
 
   const resetFinancialConfig = () => {
@@ -738,13 +806,22 @@ const Dashboard = () => {
   ]
 
   const topVehicles = vehicles.slice(0, 5)
-  const configuredUsers = Object.keys(accessMatrix).sort()
+  const configuredUsers = [...accessUsers]
+    .filter((entry) => entry.role !== 'ADMIN')
+    .sort((left, right) => (left.name || left.email).localeCompare(right.name || right.email))
+  const driversByVehicleId = drivers.reduce((accumulator, driver) => {
+    if (driver.assignedVehicleId) {
+      accumulator[driver.assignedVehicleId] = driver
+    }
+    return accumulator
+  }, {})
   const fleetOperationalRows = vehicles.map((vehicle, index) => {
     const statusCycle = ['Ativo no dia', 'Em manutencao', 'Indisponivel', 'Disponivel']
     const executionCycle = ['Em rota', 'Aguardando saida', 'Concluida', 'Parado']
     const routeLabel = `Rota ${String(index + 1).padStart(2, '0')}`
-    const status = statusCycle[index % statusCycle.length]
-    const driverAssigned = index % 4 === 3 ? null : mockDriverNames[index % mockDriverNames.length]
+    const linkedDriver = driversByVehicleId[vehicle.id]
+    const status = linkedDriver?.status || statusCycle[index % statusCycle.length]
+    const driverAssigned = linkedDriver?.name || null
     const kmRodados = Number((48 + index * 19 + Number(vehicle.avgConsumption || 0) * 3).toFixed(1))
     const routesExecuted = Math.max(1, (index % 4) + 1)
     const totalTimeHours = Number((2.4 + index * 0.8).toFixed(1))
@@ -766,9 +843,11 @@ const Dashboard = () => {
       ...vehicle,
       status,
       driverAssigned,
-      lastRoute: `${routeLabel} • ${status === 'Concluida' ? 'concluida hoje' : 'ultima execucao recente'}`,
-      executionStatus: executionCycle[index % executionCycle.length],
-      currentRoute: `${routeLabel} / Base Centro`,
+      lastRoute: linkedDriver?.currentRouteLabel
+        ? `${linkedDriver.currentRouteLabel} • ${status === 'Concluida' ? 'concluida hoje' : 'ultima execucao recente'}`
+        : `${routeLabel} • ${status === 'Concluida' ? 'concluida hoje' : 'ultima execucao recente'}`,
+      executionStatus: linkedDriver?.routeExecutionStatus || executionCycle[index % executionCycle.length],
+      currentRoute: linkedDriver?.currentRouteLabel || `${routeLabel} / Base Centro`,
       kmRodados,
       routesExecuted,
       totalTimeHours,
@@ -778,7 +857,8 @@ const Dashboard = () => {
       docsExpiring,
       revisionForecast,
       alert,
-      swapCount: index % 3,
+      swapCount: linkedDriver ? 0 : index % 3,
+      checkInRequired: Boolean(linkedDriver?.checkInRequired),
     }
   })
 
@@ -792,9 +872,7 @@ const Dashboard = () => {
 
   const assignedVehicles = fleetOperationalRows.filter((item) => item.driverAssigned)
   const unassignedVehicles = fleetOperationalRows.filter((item) => !item.driverAssigned)
-  const driversWithoutVehicle = mockDriverNames.filter(
-    (driver) => !fleetOperationalRows.some((item) => item.driverAssigned === driver),
-  )
+  const driversWithoutVehicle = drivers.filter((driver) => !driver.assignedVehicleId)
   const totalSwapCount = fleetOperationalRows.reduce((acc, item) => acc + item.swapCount, 0)
 
   const chartPanel = (
@@ -1109,6 +1187,14 @@ const Dashboard = () => {
           <Link to="/addresses" className="px-4 py-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium inline-flex items-center gap-2">
             <MapPin size={18} />
             Enderecos
+          </Link>
+          <Link to="/drivers" className="px-4 py-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium inline-flex items-center gap-2">
+            <Users size={18} />
+            Motoristas
+          </Link>
+          <Link to="/driver-portal" className="px-4 py-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium inline-flex items-center gap-2">
+            <Smartphone size={18} />
+            Portal do motorista
           </Link>
         </div>
       </div>
@@ -1615,7 +1701,7 @@ const Dashboard = () => {
               </div>
             </div>
 
-            <div className="w-full xl:w-auto grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+            <div className="w-full xl:w-auto grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3">
               <label className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm">
                 <span className="block text-gray-500 mb-1">Inicio</span>
                 <input
@@ -1666,6 +1752,15 @@ const Dashboard = () => {
               <button onClick={fetchDashboard} className="btn-primary rounded-2xl flex items-center justify-center gap-2">
                 <RefreshCw size={18} />
                 Atualizar
+              </button>
+              <button
+                type="button"
+                onClick={exportReport}
+                disabled={isExporting}
+                className="px-4 py-2 rounded-2xl border border-gray-200 bg-white text-sm font-medium text-gray-800 inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <Download size={18} />
+                {isExporting ? 'Exportando...' : 'Exportar'}
               </button>
             </div>
           </div>
@@ -2048,17 +2143,18 @@ const Dashboard = () => {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {configuredUsers.map((email) => {
-                      const access = normalizeAccess(accessMatrix[email], createDefaultUserAccess())
+                    {configuredUsers.map((accessUser) => {
+                      const access = normalizeAccess(accessUser.viewAccess, createDefaultUserAccess())
 
                       return (
                         <button
-                          key={email}
+                          key={accessUser.email}
                           type="button"
-                          onClick={() => editPermissionEntry(email)}
+                          onClick={() => editPermissionEntry(accessUser.email)}
                           className="w-full text-left border border-gray-100 rounded-2xl px-4 py-4 hover:border-gray-200"
                         >
-                          <p className="font-semibold text-gray-900">{email}</p>
+                          <p className="font-semibold text-gray-900">{accessUser.name || accessUser.email}</p>
+                          <p className="text-xs text-gray-500 mt-1">{accessUser.email} • {accessUser.role === 'ADMIN' ? 'Administrador' : 'Usuario'}</p>
                           <p className="text-xs text-gray-500 mt-2">
                             Operacional: {access.operational ? 'Sim' : 'Nao'} • Financeira: {access.financial ? 'Sim' : 'Nao'} • Frota: {access.fleet ? 'Sim' : 'Nao'}
                           </p>

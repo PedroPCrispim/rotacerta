@@ -1,6 +1,7 @@
 package com.rotacerta.application.usecase.impl;
 
 import com.rotacerta.application.dto.AuthResponseDTO;
+import com.rotacerta.application.dto.DashboardViewAccessDTO;
 import com.rotacerta.application.dto.LoginRequestDTO;
 import com.rotacerta.application.service.TokenService;
 import com.rotacerta.application.usecase.AuthUseCase;
@@ -40,6 +41,11 @@ public class AuthUseCaseImpl implements AuthUseCase {
                 .email(user.getEmail())
                 .role(user.getRole().name())
                 .companyId(user.getCompanyId())
+                .viewAccess(DashboardViewAccessDTO.builder()
+                        .operational(user.getRole() == User.UserRole.ADMIN || user.isCanViewOperational())
+                        .financial(user.getRole() == User.UserRole.ADMIN || user.isCanViewFinancial())
+                        .fleet(user.getRole() == User.UserRole.ADMIN || user.isCanViewFleet())
+                        .build())
                 .build();
     }
 }

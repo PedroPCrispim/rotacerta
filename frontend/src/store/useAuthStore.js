@@ -22,6 +22,14 @@ const useAuthStore = create((set) => ({
     localStorage.setItem('user', JSON.stringify(user));
     set({ user, token });
   },
+  updateUser: (partialUser) =>
+    set((state) => {
+      const nextUser = state.user ? { ...state.user, ...partialUser } : null;
+      if (nextUser) {
+        localStorage.setItem('user', JSON.stringify(nextUser));
+      }
+      return { user: nextUser };
+    }),
   logout: () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');

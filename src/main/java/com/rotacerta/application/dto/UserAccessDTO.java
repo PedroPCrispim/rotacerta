@@ -1,23 +1,17 @@
 package com.rotacerta.application.dto;
 
-import java.util.UUID;
-
-public class AuthResponseDTO {
-    private String token;
+public class UserAccessDTO {
     private String name;
     private String email;
     private String role;
-    private UUID companyId;
     private DashboardViewAccessDTO viewAccess;
 
-    public AuthResponseDTO() {}
+    public UserAccessDTO() {}
 
-    public AuthResponseDTO(String token, String name, String email, String role, UUID companyId, DashboardViewAccessDTO viewAccess) {
-        this.token = token;
+    public UserAccessDTO(String name, String email, String role, DashboardViewAccessDTO viewAccess) {
         this.name = name;
         this.email = email;
         this.role = role;
-        this.companyId = companyId;
         this.viewAccess = viewAccess;
     }
 
@@ -26,35 +20,27 @@ public class AuthResponseDTO {
     }
 
     public static class Builder {
-        private String token;
         private String name;
         private String email;
         private String role;
-        private UUID companyId;
         private DashboardViewAccessDTO viewAccess;
 
-        public Builder token(String token) { this.token = token; return this; }
         public Builder name(String name) { this.name = name; return this; }
         public Builder email(String email) { this.email = email; return this; }
         public Builder role(String role) { this.role = role; return this; }
-        public Builder companyId(UUID companyId) { this.companyId = companyId; return this; }
         public Builder viewAccess(DashboardViewAccessDTO viewAccess) { this.viewAccess = viewAccess; return this; }
 
-        public AuthResponseDTO build() {
-            return new AuthResponseDTO(token, name, email, role, companyId, viewAccess);
+        public UserAccessDTO build() {
+            return new UserAccessDTO(name, email, role, viewAccess);
         }
     }
 
-    public String getToken() { return token; }
-    public void setToken(String token) { this.token = token; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
-    public UUID getCompanyId() { return companyId; }
-    public void setCompanyId(UUID companyId) { this.companyId = companyId; }
     public DashboardViewAccessDTO getViewAccess() { return viewAccess; }
     public void setViewAccess(DashboardViewAccessDTO viewAccess) { this.viewAccess = viewAccess; }
 }

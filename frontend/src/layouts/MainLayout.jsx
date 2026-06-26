@@ -5,6 +5,8 @@ import {
   Truck, 
   MapPin, 
   Route, 
+  Users,
+  Smartphone,
   LogOut, 
   Menu, 
   ChevronRight
@@ -22,6 +24,8 @@ const MainLayout = () => {
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/routing', icon: Route, label: 'Roteirização' },
     { path: '/vehicles', icon: Truck, label: 'Veículos' },
+    { path: '/drivers', icon: Users, label: 'Motoristas' },
+    { path: '/driver-portal', icon: Smartphone, label: 'Portal do Motorista' },
     { path: '/addresses', icon: MapPin, label: 'Endereços' },
   ]
 

@@ -52,6 +52,9 @@ public class CompanyRegistrationUseCaseImpl implements CompanyRegistrationUseCas
                 .email(request.getAdminEmail())
                 .password(passwordEncoder.encode(request.getAdminPassword()))
                 .role(User.UserRole.ADMIN)
+                .canViewOperational(true)
+                .canViewFinancial(true)
+                .canViewFleet(true)
                 .createdAt(LocalDateTime.now())
                 .build();
 

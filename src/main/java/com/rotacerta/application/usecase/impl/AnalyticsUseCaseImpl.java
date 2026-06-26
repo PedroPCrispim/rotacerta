@@ -4,14 +4,17 @@ import com.rotacerta.application.dto.*;
 import com.rotacerta.application.usecase.AnalyticsUseCase;
 import com.rotacerta.domain.model.AnalyticsDailyAggregator;
 import com.rotacerta.domain.model.AnalyticsRouteSummary;
+import com.rotacerta.domain.model.FinancialSettings;
 import com.rotacerta.domain.model.Vehicle;
 import com.rotacerta.domain.repository.AnalyticsDailyAggregatorRepository;
 import com.rotacerta.domain.repository.AnalyticsRouteSummaryRepository;
+import com.rotacerta.domain.repository.FinancialSettingsRepository;
 import com.rotacerta.domain.repository.VehicleRepository;
 import com.rotacerta.infrastructure.multitenancy.TenantContext;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
@@ -32,13 +35,16 @@ public class AnalyticsUseCaseImpl implements AnalyticsUseCase {
     private final AnalyticsRouteSummaryRepository routeSummaryRepository;
     private final AnalyticsDailyAggregatorRepository dailyAggregatorRepository;
     private final VehicleRepository vehicleRepository;
+    private final FinancialSettingsRepository financialSettingsRepository;
 
     public AnalyticsUseCaseImpl(AnalyticsRouteSummaryRepository routeSummaryRepository,
                                 AnalyticsDailyAggregatorRepository dailyAggregatorRepository,
-                                VehicleRepository vehicleRepository) {
+                                VehicleRepository vehicleRepository,
+                                FinancialSettingsRepository financialSettingsRepository) {
         this.routeSummaryRepository = routeSummaryRepository;
         this.dailyAggregatorRepository = dailyAggregatorRepository;
         this.vehicleRepository = vehicleRepository;
+        this.financialSettingsRepository = financialSettingsRepository;
     }
 
     @Override
@@ -87,6 +93,35 @@ public class AnalyticsUseCaseImpl implements AnalyticsUseCase {
                 .totalCostSaved(totalCostSaved)
                 .savingsByMonth(savingsByMonth)
                 .build();
+    }
+
+    @Override
+    public FinancialSettingsDTO getFinancialSettings() {
+        UUID tenantId = TenantContext.getTenantId();
+        return financialSettingsRepository.findByCompanyId(tenantId)
+                .map(this::mapToFinancialSettingsDTO)
+                .orElseGet(() -> mapToFinancialSettingsDTO(buildDefaultFinancialSettings(tenantId)));
+    }
+
+    @Override
+    public FinancialSettingsDTO saveFinancialSettings(FinancialSettingsDTO dto) {
+        UUID tenantId = TenantContext.getTenantId();
+        FinancialSettings existing = financialSettingsRepository.findByCompanyId(tenantId)
+                .orElseGet(() -> buildDefaultFinancialSettings(tenantId));
+
+        existing.setCompanyId(tenantId);
+        existing.setRegion(dto.getRegion());
+        existing.setGasolinePrice(dto.getGasolinePrice());
+        existing.setEthanolPrice(dto.getEthanolPrice());
+        existing.setDieselPrice(dto.getDieselPrice());
+        existing.setFixedCostPerVehicle(dto.getFixedCostPerVehicle());
+        existing.setMaintenanceReserve(dto.getMaintenanceReserve());
+        existing.setTollCost(dto.getTollCost());
+        existing.setDriverDailyCost(dto.getDriverDailyCost());
+        existing.setTargetSavings(dto.getTargetSavings());
+        existing.setMaxCostPerDelivery(dto.getMaxCostPerDelivery());
+
+        return mapToFinancialSettingsDTO(financialSettingsRepository.save(existing));
     }
 
     @Override
@@ -192,6 +227,35 @@ public class AnalyticsUseCaseImpl implements AnalyticsUseCase {
                 .variationPercentage(variationPercentage)
                 .points(points)
                 .build();
+    }
+
+    @Override
+    public byte[] exportReport(LocalDate start, LocalDate end, String granularity, String view, UUID vehicleId) {
+        String normalizedGranularity = normalizeGranularity(granularity);
+        String normalizedView = normalizeView(view);
+
+        StringBuilder csv = new StringBuilder("\uFEFF");
+        csv.append("secao;chave;valor\n");
+        csv.append("metadados;visao;").append(escapeCsv(normalizedView)).append("\n");
+        csv.append("metadados;periodo_inicial;").append(start).append("\n");
+        csv.append("metadados;periodo_final;").append(end).append("\n");
+        csv.append("metadados;granularidade;").append(normalizedGranularity).append("\n");
+        csv.append("metadados;veiculo_id;").append(vehicleId == null ? "todos" : vehicleId).append("\n");
+
+        switch (normalizedView) {
+            case "financial":
+                appendFinancialExport(csv, start, end, normalizedGranularity, vehicleId);
+                break;
+            case "fleet":
+                appendFleetExport(csv, start, end);
+                break;
+            case "operational":
+            default:
+                appendOperationalExport(csv, start, end, normalizedGranularity, vehicleId);
+                break;
+        }
+
+        return csv.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private Map<String, Double> aggregateRoutesByBucket(List<AnalyticsRouteSummary> routes,
@@ -317,7 +381,156 @@ public class AnalyticsUseCaseImpl implements AnalyticsUseCase {
         }
     }
 
+    private String normalizeView(String view) {
+        if (view == null) {
+            return "operational";
+        }
+
+        switch (view.toLowerCase(Locale.ROOT)) {
+            case "financial":
+            case "fleet":
+            case "operational":
+                return view.toLowerCase(Locale.ROOT);
+            default:
+                return "operational";
+        }
+    }
+
     private long defaultLong(Long value) {
         return value == null ? 0L : value;
+    }
+
+    private void appendOperationalExport(StringBuilder csv, LocalDate start, LocalDate end, String granularity, UUID vehicleId) {
+        DashboardDTO dashboard = getDashboard(start, end);
+        OperationsAnalyticsDTO operations = getOperations(start, end);
+
+        csv.append("resumo_operacional;total_rotas;").append(operations.getTotalRoutes()).append("\n");
+        csv.append("resumo_operacional;total_entregas;").append(operations.getTotalDeliveries()).append("\n");
+        csv.append("resumo_operacional;km_economizados;").append(formatDouble(dashboard.getTotalKmSaved())).append("\n");
+        csv.append("resumo_operacional;tempo_economizado_segundos;").append(dashboard.getTotalTimeSaved()).append("\n");
+        csv.append("resumo_operacional;utilizacao_media_percentual;").append(formatDouble(dashboard.getAvgCapacityUtilization())).append("\n");
+
+        appendTimelineSection(csv, "timeline_operacional_distancia", getTimeline(start, end, granularity, "distanceSaved", vehicleId));
+        appendTimelineSection(csv, "timeline_operacional_tempo", getTimeline(start, end, granularity, "timeSaved", vehicleId));
+        appendTimelineSection(csv, "timeline_operacional_entregas", getTimeline(start, end, granularity, "deliveries", vehicleId));
+    }
+
+    private void appendFinancialExport(StringBuilder csv, LocalDate start, LocalDate end, String granularity, UUID vehicleId) {
+        DashboardDTO dashboard = getDashboard(start, end);
+        FinancialAnalyticsDTO financial = getFinancial(start, end);
+        FinancialSettingsDTO settings = getFinancialSettings();
+
+        csv.append("resumo_financeiro;economia_total;").append(formatBigDecimal(financial.getTotalCostSaved())).append("\n");
+        csv.append("resumo_financeiro;economia_dashboard;").append(formatBigDecimal(dashboard.getTotalCostSaved())).append("\n");
+        csv.append("resumo_financeiro;regiao;").append(escapeCsv(settings.getRegion())).append("\n");
+        csv.append("resumo_financeiro;gasolina;").append(formatBigDecimal(settings.getGasolinePrice())).append("\n");
+        csv.append("resumo_financeiro;etanol;").append(formatBigDecimal(settings.getEthanolPrice())).append("\n");
+        csv.append("resumo_financeiro;diesel;").append(formatBigDecimal(settings.getDieselPrice())).append("\n");
+        csv.append("resumo_financeiro;custo_fixo_por_veiculo;").append(formatBigDecimal(settings.getFixedCostPerVehicle())).append("\n");
+        csv.append("resumo_financeiro;reserva_manutencao;").append(formatBigDecimal(settings.getMaintenanceReserve())).append("\n");
+        csv.append("resumo_financeiro;pedagio_e_extras;").append(formatBigDecimal(settings.getTollCost())).append("\n");
+        csv.append("resumo_financeiro;motorista_dia;").append(formatBigDecimal(settings.getDriverDailyCost())).append("\n");
+        csv.append("resumo_financeiro;meta_economia;").append(formatBigDecimal(settings.getTargetSavings())).append("\n");
+        csv.append("resumo_financeiro;teto_por_entrega;").append(formatBigDecimal(settings.getMaxCostPerDelivery())).append("\n");
+
+        appendTimelineSection(csv, "timeline_financeiro_custo", getTimeline(start, end, granularity, "costSaved", vehicleId));
+        appendTimelineSection(csv, "timeline_financeiro_distancia", getTimeline(start, end, granularity, "distanceSaved", vehicleId));
+        appendTimelineSection(csv, "timeline_financeiro_tempo", getTimeline(start, end, granularity, "timeSaved", vehicleId));
+        appendTimelineSection(csv, "timeline_financeiro_entregas", getTimeline(start, end, granularity, "deliveries", vehicleId));
+    }
+
+    private void appendFleetExport(StringBuilder csv, LocalDate start, LocalDate end) {
+        FleetAnalyticsDTO fleet = getFleet(start, end);
+
+        csv.append("resumo_frota;total_veiculos;").append(fleet.getTotalVehicles()).append("\n");
+        csv.append("resumo_frota;utilizacao_media_percentual;").append(formatDouble(fleet.getAvgUtilization())).append("\n");
+        csv.append("frota;veiculo_id;distancia_total_metros;utilizacao_media_percentual\n");
+
+        for (VehiclePerformanceDTO performance : fleet.getVehiclePerformances()) {
+            csv.append("frota;")
+                    .append(performance.getVehicleId())
+                    .append(";")
+                    .append(performance.getTotalDistance() == null ? 0 : performance.getTotalDistance())
+                    .append(";")
+                    .append(formatDouble(performance.getAvgCapacityUtilization()))
+                    .append("\n");
+        }
+    }
+
+    private void appendTimelineSection(StringBuilder csv, String sectionName, AnalyticsTimelineDTO timeline) {
+        csv.append(sectionName)
+                .append(";total_atual;")
+                .append(formatDouble(timeline.getCurrentTotal()))
+                .append("\n");
+        csv.append(sectionName)
+                .append(";total_anterior;")
+                .append(formatDouble(timeline.getPreviousTotal()))
+                .append("\n");
+        csv.append(sectionName)
+                .append(";variacao_percentual;")
+                .append(formatDouble(timeline.getVariationPercentage()))
+                .append("\n");
+        csv.append(sectionName).append(";bucket_label;bucket_comparacao;valor_atual;valor_anterior\n");
+
+        for (AnalyticsTimelinePointDTO point : timeline.getPoints()) {
+            csv.append(sectionName)
+                    .append(";")
+                    .append(escapeCsv(point.getLabel()))
+                    .append(";")
+                    .append(escapeCsv(point.getComparisonLabel()))
+                    .append(";")
+                    .append(formatDouble(point.getCurrentValue()))
+                    .append(";")
+                    .append(formatDouble(point.getPreviousValue()))
+                    .append("\n");
+        }
+    }
+
+    private String formatDouble(Double value) {
+        return value == null ? "0" : BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
+    private String formatBigDecimal(BigDecimal value) {
+        return value == null ? "0" : value.stripTrailingZeros().toPlainString();
+    }
+
+    private String escapeCsv(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+
+    private FinancialSettings buildDefaultFinancialSettings(UUID companyId) {
+        return FinancialSettings.builder()
+                .companyId(companyId)
+                .region("Sao Paulo")
+                .gasolinePrice(new BigDecimal("6.19"))
+                .ethanolPrice(new BigDecimal("4.09"))
+                .dieselPrice(new BigDecimal("6.02"))
+                .fixedCostPerVehicle(new BigDecimal("1800.00"))
+                .maintenanceReserve(new BigDecimal("650.00"))
+                .tollCost(new BigDecimal("280.00"))
+                .driverDailyCost(new BigDecimal("180.00"))
+                .targetSavings(new BigDecimal("4500.00"))
+                .maxCostPerDelivery(new BigDecimal("22.00"))
+                .build();
+    }
+
+    private FinancialSettingsDTO mapToFinancialSettingsDTO(FinancialSettings settings) {
+        FinancialSettingsDTO dto = new FinancialSettingsDTO();
+        dto.setId(settings.getId());
+        dto.setRegion(settings.getRegion());
+        dto.setGasolinePrice(settings.getGasolinePrice());
+        dto.setEthanolPrice(settings.getEthanolPrice());
+        dto.setDieselPrice(settings.getDieselPrice());
+        dto.setFixedCostPerVehicle(settings.getFixedCostPerVehicle());
+        dto.setMaintenanceReserve(settings.getMaintenanceReserve());
+        dto.setTollCost(settings.getTollCost());
+        dto.setDriverDailyCost(settings.getDriverDailyCost());
+        dto.setTargetSavings(settings.getTargetSavings());
+        dto.setMaxCostPerDelivery(settings.getMaxCostPerDelivery());
+        return dto;
     }
 }

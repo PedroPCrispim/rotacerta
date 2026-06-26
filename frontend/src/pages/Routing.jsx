@@ -3,13 +3,13 @@ import {
   Play, 
   Map as MapIcon, 
   CheckCircle2, 
-  Clock, 
   Navigation,
   ExternalLink,
   Smartphone,
   Loader2
 } from 'lucide-react'
 import api from '../services/api'
+import { buildGoogleMapsLink, buildWazeDeepLink } from '../utils/navigation'
 
 const Routing = () => {
   const [step, setStep] = useState(1) // 1: Setup, 2: Result
@@ -43,6 +43,28 @@ const Routing = () => {
     } finally {
       setIsCalculating(false)
     }
+  }
+
+  const resolveRouteWazeUrl = (route) => {
+    if (route?.wazeUrl) {
+      return route.wazeUrl
+    }
+
+    const firstVisitLabel = route?.visits?.[0]?.description
+    return buildWazeDeepLink({
+      query: firstVisitLabel || `Rota ${route?.vehiclePlate || route?.vehicleId || ''}`,
+    })
+  }
+
+  const resolveRouteGoogleMapsUrl = (route) => {
+    if (route?.googleMapsUrl) {
+      return route.googleMapsUrl
+    }
+
+    const firstVisitLabel = route?.visits?.[0]?.description
+    return buildGoogleMapsLink({
+      query: firstVisitLabel || `Rota ${route?.vehiclePlate || route?.vehicleId || ''}`,
+    })
   }
 
   return (
@@ -165,16 +187,25 @@ const Routing = () => {
                   <span className="flex items-center gap-1"><MapIcon size={12} /> {route.visits.length} paradas</span>
                   <span className="flex items-center gap-1"><Navigation size={12} /> {(route.distance / 1000).toFixed(1)} km</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button className="flex items-center justify-center gap-2 text-xs font-bold bg-gray-100 hover:bg-gray-200 py-2 rounded-lg transition-colors">
                     <Smartphone size={14} />
                     WhatsApp
                   </button>
                   <a 
-                    href={route.googleMapsUrl} 
+                    href={resolveRouteWazeUrl(route)} 
                     target="_blank" 
                     rel="noreferrer"
                     className="flex items-center justify-center gap-2 text-xs font-bold bg-brand-blue text-white hover:bg-blue-700 py-2 rounded-lg transition-colors"
+                  >
+                    <ExternalLink size={14} />
+                    Waze
+                  </a>
+                  <a 
+                    href={resolveRouteGoogleMapsUrl(route)} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-2 text-xs font-bold bg-green-50 text-green-700 hover:bg-green-100 py-2 rounded-lg transition-colors"
                   >
                     <ExternalLink size={14} />
                     Google Maps

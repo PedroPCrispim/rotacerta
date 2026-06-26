@@ -1,0 +1,9 @@
+spring:
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    com.rotacerta: INFO
+    org.springframework: INFO
+    org.springframework.security: WARN

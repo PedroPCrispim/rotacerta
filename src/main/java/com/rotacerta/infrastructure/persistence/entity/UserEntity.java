@@ -30,6 +30,15 @@ public class UserEntity {
     @Column(nullable = false)
     private String role;
 
+    @Column(name = "can_view_operational", nullable = false)
+    private boolean canViewOperational;
+
+    @Column(name = "can_view_financial", nullable = false)
+    private boolean canViewFinancial;
+
+    @Column(name = "can_view_fleet", nullable = false)
+    private boolean canViewFleet;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -40,13 +49,18 @@ public class UserEntity {
 
     public UserEntity() {}
 
-    public UserEntity(UUID id, UUID companyId, String name, String email, String password, String role, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    public UserEntity(UUID id, UUID companyId, String name, String email, String password, String role,
+                      boolean canViewOperational, boolean canViewFinancial, boolean canViewFleet,
+                      LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.id = id;
         this.companyId = companyId;
         this.name = name;
         this.email = email;
         this.password = password;
         this.role = role;
+        this.canViewOperational = canViewOperational;
+        this.canViewFinancial = canViewFinancial;
+        this.canViewFleet = canViewFleet;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -62,6 +76,9 @@ public class UserEntity {
         private String email;
         private String password;
         private String role;
+        private boolean canViewOperational;
+        private boolean canViewFinancial;
+        private boolean canViewFleet;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
 
@@ -71,11 +88,26 @@ public class UserEntity {
         public Builder email(String email) { this.email = email; return this; }
         public Builder password(String password) { this.password = password; return this; }
         public Builder role(String role) { this.role = role; return this; }
+        public Builder canViewOperational(boolean canViewOperational) { this.canViewOperational = canViewOperational; return this; }
+        public Builder canViewFinancial(boolean canViewFinancial) { this.canViewFinancial = canViewFinancial; return this; }
+        public Builder canViewFleet(boolean canViewFleet) { this.canViewFleet = canViewFleet; return this; }
         public Builder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }
         public Builder updatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; return this; }
 
         public UserEntity build() {
-            return new UserEntity(id, companyId, name, email, password, role, createdAt, updatedAt);
+            return new UserEntity(
+                    id,
+                    companyId,
+                    name,
+                    email,
+                    password,
+                    role,
+                    canViewOperational,
+                    canViewFinancial,
+                    canViewFleet,
+                    createdAt,
+                    updatedAt
+            );
         }
     }
 
@@ -91,6 +123,12 @@ public class UserEntity {
     public void setPassword(String password) { this.password = password; }
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
+    public boolean isCanViewOperational() { return canViewOperational; }
+    public void setCanViewOperational(boolean canViewOperational) { this.canViewOperational = canViewOperational; }
+    public boolean isCanViewFinancial() { return canViewFinancial; }
+    public void setCanViewFinancial(boolean canViewFinancial) { this.canViewFinancial = canViewFinancial; }
+    public boolean isCanViewFleet() { return canViewFleet; }
+    public void setCanViewFleet(boolean canViewFleet) { this.canViewFleet = canViewFleet; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
